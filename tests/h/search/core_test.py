@@ -10,12 +10,13 @@ Tests for filtering/matching/aggregating on specific annotation fields are in
 from __future__ import unicode_literals
 
 import datetime
-
+import mock
 import pytest
 
 from h import search
 
 
+@pytest.mark.usefixtures('celery')
 class TestSearch(object):
     """Unit tests for search.Search when no separate_replies argument is given."""
 
@@ -124,19 +125,22 @@ class TestSearch(object):
 
         assert result.reply_ids == []
 
-    def test_it_passes_es_version_to_builder(self, pyramid_request, Builder):
+    def test_it_passes_es_version_to_builder(self, pyramid_request, Builder, celery):
         client = pyramid_request.es
+        if celery.request.feature('search_es6'):
+            client = pyramid_request.es6
 
         search.Search(pyramid_request)
 
-        assert Builder.call_count == 2
-        Builder.assert_any_call(es_version=client.version)
+        assert Builder.call_count >= 2
+        Builder.assert_called_with(client.version)
 
     @pytest.fixture
     def Builder(self, patch):
         return patch('h.search.core.query.Builder', autospec=True)
 
 
+@pytest.mark.usefixtures('celery')
 class TestSearchWithSeparateReplies(object):
     """Unit tests for search.Search when separate_replies=True is given."""
 
@@ -243,3 +247,24 @@ class TestSearchWithSeparateReplies(object):
 
         assert len(result.reply_ids) == 3
         assert oldest_reply.id not in result.reply_ids
+
+
+@pytest.fixture(params=[True, False])
+def celery(request, patch, pyramid_request):
+    cel = patch('h.search.core.celery')
+    cel.request = pyramid_request
+
+    def feature(flag):
+        if flag == 'search_es6':
+            return request.param
+        return True
+
+    cel.request.feature = mock.Mock(side_effect=feature)
+    return cel
+
+
+@pytest.fixture
+def pyramid_request(pyramid_request, es_client, es6_client):
+    pyramid_request.es = es_client
+    pyramid_request.es6 = es6_client
+    return pyramid_request
