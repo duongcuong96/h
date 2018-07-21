@@ -2,7 +2,7 @@
 from __future__ import unicode_literals
 
 import datetime
-
+import mock
 import pytest
 import webob
 
@@ -74,6 +74,7 @@ class TestBuilder(object):
                                   "must": []}}
 
 
+@pytest.mark.usefixtures('celery')
 class TestTopLevelAnnotationsFilter(object):
 
     def test_it_filters_out_replies_but_leaves_annotations_in(self, Annotation, search):
@@ -90,6 +91,7 @@ class TestTopLevelAnnotationsFilter(object):
         return search
 
 
+@pytest.mark.usefixtures('celery')
 class TestAuthorityFilter(object):
     def test_it_filters_out_non_matching_authorities(self, Annotation, search):
         annotations_auth1 = [Annotation(userid="acct:foo@auth1").id,
@@ -108,6 +110,7 @@ class TestAuthorityFilter(object):
         return search
 
 
+@pytest.mark.usefixtures('celery')
 class TestAuthFilter(object):
     def test_logged_out_user_can_not_see_private_annotations(self, search, Annotation):
         Annotation()
@@ -154,6 +157,7 @@ class TestAuthFilter(object):
         return search
 
 
+@pytest.mark.usefixtures('celery')
 class TestGroupFilter(object):
     def test_matches_only_annotations_from_specified_group(self, search, Annotation, group):
         Annotation(groupid='group2')
@@ -175,9 +179,10 @@ class TestGroupFilter(object):
         return factories.OpenGroup(name="group1", pubid="group1id")
 
 
+@pytest.mark.usefixtures('celery')
 class TestGroupAuthFilter(object):
     def test_does_not_return_annotations_if_group_not_readable_by_user(
-        self, search, Annotation, group_service
+        self, search, Annotation, group_service,
     ):
         group_service.groupids_readable_by.return_value = []
         Annotation(groupid="group2").id
@@ -189,7 +194,7 @@ class TestGroupAuthFilter(object):
         assert not result.annotation_ids
 
     def test_returns_annotations_if_group_readable_by_user(
-        self, search, Annotation, group_service
+        self, search, Annotation, group_service,
     ):
         group_service.groupids_readable_by.return_value = ["group1"]
         Annotation(groupid="group2", shared=True).id
@@ -206,6 +211,7 @@ class TestGroupAuthFilter(object):
         return search
 
 
+@pytest.mark.usefixtures('celery')
 class TestUserFilter(object):
     def test_filters_annotations_by_user(self, search, Annotation):
         Annotation(userid="acct:foo@auth2", shared=True)
@@ -248,6 +254,7 @@ class TestUserFilter(object):
         return search
 
 
+@pytest.mark.usefixtures('celery')
 class TestUriFilter(object):
     @pytest.mark.parametrize("field", ("uri", "url"))
     def test_filters_by_field(self, search, Annotation, field):
@@ -331,6 +338,7 @@ class TestUriFilter(object):
         return patch('h.search.query.storage')
 
 
+@pytest.mark.usefixtures('celery')
 class TestDeletedFilter(object):
 
     def test_excludes_deleted_annotations(self, search, Annotation):
@@ -351,7 +359,7 @@ class TestDeletedFilter(object):
         return search
 
 
-@pytest.mark.usefixtures('pyramid_config')
+@pytest.mark.usefixtures('pyramid_config', 'celery')
 class TestNipsaFilter(object):
 
     def test_hides_banned_users_annotations_from_other_users(
@@ -416,6 +424,7 @@ class TestNipsaFilter(object):
         return group_service
 
 
+@pytest.mark.usefixtures('celery')
 class TestAnyMatcher(object):
     def test_matches_uriparts(self, search, Annotation):
         Annotation(target_uri="http://bar.com")
@@ -496,6 +505,7 @@ class TestAnyMatcher(object):
         return AnnotationWithDefaults
 
 
+@pytest.mark.usefixtures('celery')
 class TestTagsMatcher(object):
     def test_matches_tag_key(self, search, Annotation):
         Annotation(shared=True)
@@ -540,6 +550,7 @@ class TestTagsMatcher(object):
         return search
 
 
+@pytest.mark.usefixtures('celery')
 class TestRepliesMatcher(object):
     def test_matches_unnested_replies_to_annotations(self, Annotation, search):
         ann1 = Annotation()
@@ -577,6 +588,7 @@ class TestRepliesMatcher(object):
         assert sorted(result.annotation_ids) == sorted(expected_reply_ids)
 
 
+@pytest.mark.usefixtures('celery')
 class TestTagsAggregation(object):
     def test_it_returns_annotation_counts_by_tag(self, Annotation, search):
         for i in range(2):
@@ -615,6 +627,7 @@ class TestTagsAggregation(object):
         assert count_for_tag_c == 2
 
 
+@pytest.mark.usefixtures('celery')
 class TestUsersAggregation(object):
     def test_it_returns_annotation_counts_by_user(self, Annotation, search):
         for i in range(2):
@@ -651,6 +664,27 @@ class TestUsersAggregation(object):
         assert len(users_results) == bucket_limit
         assert count_pb == 3
         assert count_pc == 2
+
+
+@pytest.fixture(params=[True, False])
+def celery(request, patch, pyramid_request):
+    cel = patch('h.search.core.celery')
+    cel.request = pyramid_request
+
+    def feature(flag):
+        if flag == 'search_es6':
+            return request.param
+        return True
+
+    cel.request.feature = mock.Mock(side_effect=feature)
+    return cel
+
+
+@pytest.fixture
+def pyramid_request(pyramid_request, es_client, es6_client):
+    pyramid_request.es = es_client
+    pyramid_request.es6 = es6_client
+    return pyramid_request
 
 
 @pytest.fixture
